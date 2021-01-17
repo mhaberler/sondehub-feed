@@ -17,7 +17,7 @@ import bz2
 import signal
 import setproctitle
 
-appName = "sonde-republisher"
+appName = "sondehub-republisher"
 defaultLoglevel = 'INFO'
 
 
