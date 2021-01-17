@@ -1,0 +1,24 @@
+[Unit]
+Description=Sondehub MQTT client and ZMQ re-publisher
+
+[Service]
+Environment=SONDEHUB_HOST=
+Environment=SONDEHUB_POOLID=
+Environment=SONDEHUB_REGION=
+
+Environment=SONDEHUB_PUBSOCKET=ipc:///tmp/sondehub-feed
+Environment=SONDEHUB_CLIENTID=sondehub-feed-persistent-name
+Environment=SONDEHUB_LOGLEVEL=INFO
+Environment=SONDEHUB_PERSISTENT=True
+
+ExecStart=/home/sondehub/miniconda3/envs/sondehub-3.8/bin/python /home/sondehub/sondehub-republish.py
+
+WorkingDirectory=/var/www/sondehub
+
+User=sondehub
+Group=sondehub
+
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
