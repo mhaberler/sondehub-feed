@@ -1,0 +1,20 @@
+[Unit]
+Description=Sondehub Logger
+
+[Service]
+Environment=LOGGER_SUBSOCKET=ipc:///tmp/sondehub-feed
+Environment=LOGGER_TOPICS="sondes"
+Environment=LOGGER_LOGLEVEL=INFO
+Environment=LOGGER_LOGDIR=.
+
+ExecStart=/home/sondehub/miniconda3/envs/sondehub-3.8/bin/python /home/sondehub/sondehub-logger.py
+
+WorkingDirectory=/var/www/sondehub
+
+User=sondehub
+Group=sondehub
+
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
