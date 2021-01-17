@@ -10,6 +10,7 @@ Environment=SONDEHUB_PUBSOCKET=ipc:///tmp/sondehub-feed
 Environment=SONDEHUB_CLIENTID=sondehub-feed-persistent-name
 Environment=SONDEHUB_LOGLEVEL=INFO
 Environment=SONDEHUB_PERSISTENT=True
+Environment=SONDEHUB_LOGDIR=/var/log/sondehub-republisher
 
 ExecStart=/home/sondehub/miniconda3/envs/sondehub-3.8/bin/python /home/sondehub/sondehub-republish.py
 
