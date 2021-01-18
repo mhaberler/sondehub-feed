@@ -42,6 +42,13 @@ def usr1_handler(signum, frame):
         handler.setLevel(currentLevel)
     log.info(f"received signal {signum}, new loglevel={currentLevel}")
 
+def Bzip2Rotator(source, dest):
+    with open(source, "rb") as sf:
+        compressed = bz2.compress(sf.read(), 9)
+        with open(f"{dest}.bzip2", "wb") as df:
+            df.write(compressed)
+    os.remove(source)
+
 def setup_logging(level, appName, logDir):
     global log
     log = logging.getLogger(appName)
@@ -50,9 +57,9 @@ def setup_logging(level, appName, logDir):
     logHandler = handlers.TimedRotatingFileHandler(f"{logDir}/{appName}.log",
                                                    when='midnight',
                                                    backupCount=14)
-
+    logHandler.rotator = Bzip2Rotator
     fmt = logging.Formatter('%(asctime)s.%(msecs)03d %(levelname)-3s '
-                            '%(filename)-12s%(lineno)3d %(message)s')
+                            '%(filename)-12s:%(lineno)3d %(message)s')
 
     if level == logging.DEBUG:
         stderrHandler = logging.StreamHandler(sys.stderr)

@@ -162,9 +162,9 @@ def setup_logging(level, appName, logDir):
     logHandler = handlers.TimedRotatingFileHandler(f"{logDir}/{appName}.log",
                                                    when='midnight',
                                                    backupCount=14)
-
+    logHandler.rotator = Bzip2Rotator
     fmt = logging.Formatter('%(asctime)s.%(msecs)03d %(levelname)-3s '
-                            '%(filename)-12s%(lineno)3d %(message)s')
+                            '%(filename)-12s:%(lineno)3d %(message)s')
 
     if level == logging.DEBUG:
         stderrHandler = logging.StreamHandler(sys.stderr)
