@@ -19,7 +19,8 @@ import setproctitle
 
 appName = "sondehub-republisher"
 defaultLoglevel = 'INFO'
-
+minDelay=3
+maxDelay=120
 
 import hmac, datetime, urllib.parse, hashlib
 def aws_sign(key, msg):
@@ -94,17 +95,19 @@ class SondeRepublisher(mqtt.Client):
                    headers=None,
                    port=443,
                    keepalive=60):
+        self.topic = topic
         self.ws_set_options(path=f"{urlparts.path}?{urlparts.query}", headers=headers)
         self.tls_set()
+        self.reconnect_delay_set(min_delay=minDelay, max_delay=maxDelay)
         self.connect(urlparts.netloc, port, keepalive)
-        self.subscribe(topic, 0)
 
-    def run(self):
+    def run(self, *args, **kwargs):
         log.debug(f"loop_forever")
-        self.loop_forever()
+        self.loop_forever(**kwargs)
 
     def on_connect(self, mqttc, obj, flags, rc):
         log.info(f"on_connect rc={rc}")
+        self.subscribe(self.topic, 1)
 
     def on_message(self, mqttc, obj, msg):
         log.debug(f"on_message topic={msg.topic} qos={msg.qos} payload={str(msg.payload)}")
@@ -240,6 +243,8 @@ def main():
     setup_logging(getattr(logging, args.logLevel), appName, args.logDir)
     signal.signal(signal.SIGUSR1, usr1_handler)
 
+    log.info(f"starting up")
+
     identityPoolID = f"{args.sondehubRegion}:{args.sondehubPoolId}"
     cognitoIdentityClient = boto3.client('cognito-identity', region_name=args.sondehubRegion)
     temporaryIdentityId = cognitoIdentityClient.get_id(IdentityPoolId=identityPoolID)
@@ -271,7 +276,7 @@ def main():
     setproctitle.setproctitle((f"{appName} log={log.getEffectiveLevel()} "
                                f"logdir={args.logDir} "
                                f"host={args.sondehubHost}"))
-    sp.run()
+    sp.run(retry_first_connection=True, timeout=20.0)
 
 if __name__ == '__main__':
     main()
