@@ -150,12 +150,14 @@ def usr1_handler(signum, frame):
         handler.setLevel(currentLevel)
     log.info(f"received signal {signum}, new loglevel={currentLevel}")
 
+
 def Bzip2Rotator(source, dest):
     with open(source, "rb") as sf:
         compressed = bz2.compress(sf.read(), 9)
-        with open(f"{dest}.bzip2", "wb") as df:
+        with open(f"{dest}.bz2", "wb") as df:
             df.write(compressed)
     os.remove(source)
+
 
 def setup_logging(level, appName, logDir):
     global log
