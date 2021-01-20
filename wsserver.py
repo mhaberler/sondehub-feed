@@ -34,7 +34,7 @@ from datetime import datetime, timedelta, timezone, time, date
 import base64
 from collections import Counter
 import geojson
-import geobuf
+#import geobuf
 import ciso8601
 from txzmq import ZmqEndpoint, ZmqFactory, ZmqPubConnection, ZmqSubConnection
 
@@ -42,6 +42,18 @@ import boundingbox
 from jwt import InvalidAudienceError, ExpiredSignatureError, InvalidSignatureError, PyJWTError
 from jwtauth import *
 
+import protobuf.messages_pb2
+from  protobuf.encode import Encoder
+from  protobuf.decode import Decoder
+
+#import geobuf
+
+# from protobuf.geobuf_pb2 import Data
+# import protobuf.messages_pb2
+# from protobuf.geobuf_pb2 import Data
+#
+# from protobuf.messages_pb2 import ServerContainerType, ClientContainerType, Timestamp, \
+#     MadisSonde, ServerContainer, BoundingBox, ClientContainer
 appName = "sonde-server"
 defaultLoglevel = 'INFO'
 defaultLogDir = "/var/log/sonde-server"
@@ -50,6 +62,14 @@ facility = syslog.LOG_LOCAL1
 pubSocket = "ipc:///tmp/adsb-json-feed"
 
 PING_EVERY = 30  # secs for now
+
+
+def geobuf_encode(*args):
+    return Encoder().encode(*args)
+
+
+def geobuf_decode(*args):
+    return Decoder().decode(*args)
 
 
 def in_range(x, range):
@@ -323,7 +343,7 @@ class WSServerProtocol(WebSocketServerProtocol):
 
         for k, v in self.factory.observer.aircraft.items():
             js = orjson.dumps(v.__geo_interface__, option=orjson.OPT_APPEND_NEWLINE)
-            pbf = geobuf.encode(v.__geo_interface__)
+            pbf = geobuf_encode(v.__geo_interface__)
             for client in self.factory.clients:
                 if client.proto == 'sonde-geobuf':
                     client.sendMessage(pbf, True)
