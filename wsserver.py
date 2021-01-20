@@ -164,13 +164,16 @@ class SondeObservation(object):
         self.featureCollection = geojson.FeatureCollection([])
         self.firstSeen = when
         self.name = name
+        self.updated = False
 
     def addSample(self, sample, when):
         self.lastSeen = when
         self.featureCollection.features.append(sample)
+        self.updated = True
 
     def sampleCount(self):
         return len(self.featureCollection.features)
+
 
     @property
     def __geo_interface__(self):
@@ -180,6 +183,14 @@ class SondeObservation(object):
 class SondeObserver(object):
     def __init__(self):
         self.aircraft = dict()
+
+    def getChanged(self):
+        changed = []
+        for k, v in self.aircraft.items():
+            if v.updated:
+                changed.append(v)
+                v.updated = False
+        return changed
 
     def processMessage(self, data, topic):
         log.debug(f"processMessage topic={topic} data={data}")
@@ -341,6 +352,7 @@ class WSServerProtocol(WebSocketServerProtocol):
         self.factory.registerClient(self)
         self.doPing()
 
+        # a full dump - FIXME needs bbox
         for k, v in self.factory.observer.aircraft.items():
             js = orjson.dumps(v.__geo_interface__, option=orjson.OPT_APPEND_NEWLINE)
             pbf = geobuf_encode(v.__geo_interface__)
@@ -399,6 +411,17 @@ class WSServerFactory(WebSocketServerFactory):
             c.notifyClient(message)
         log.debug(f"Sent messages")
 
+
+    def updateClients(self):
+        changed = self.observer.getChanged()
+        for v in changed:
+            js = orjson.dumps(v.__geo_interface__, option=orjson.OPT_APPEND_NEWLINE)
+            pbf = geobuf_encode(v.__geo_interface__)
+            for client in self.clients:
+                if client.proto == 'sonde-geobuf':
+                    client.sendMessage(pbf, True)
+                if client.proto == 'sonde-json':
+                    client.sendMessage(js, False)
 
 class StateResource(Resource):
 
@@ -658,8 +681,8 @@ def main():
         for topic in args.topics:
             zmqSocket.subscribe(topic)
 
-    lc = LoopingCall(client_updater, flight_observer, zmqSocket)
-    lc.start(0.3)
+    lc = LoopingCall(websocket_factory.updateClients)
+    lc.start(0.5)
 
     setproctitle.setproctitle((f"{appName} "
                                f"logdir={args.logDir} "))
