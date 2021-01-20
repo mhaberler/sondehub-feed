@@ -6,9 +6,11 @@ from twisted.internet.endpoints import clientFromString, serverFromString
 from twisted.internet.task import LoopingCall
 from twisted.application.internet import ClientService, backoffPolicy, StreamServerEndpointService
 from twisted.application import internet, service
-from twisted.python.log import PythonLoggingObserver, ILogObserver, startLogging, startLoggingWithObserver, addObserver
+#from twisted.python.log import PythonLoggingObserver, ILogObserver, startLogging, startLoggingWithObserver, addObserver
 from twisted.web.server import Site
 from twisted.web.resource import Resource
+from twisted.logger import Logger, LogLevel, LogLevelFilterPredicate, \
+    textFileLogObserver, FilteringLogObserver, globalLogBeginner
 
 from autobahn.twisted.websocket import WebSocketServerFactory, \
     WebSocketServerProtocol, \
@@ -47,7 +49,7 @@ defaultLogDir = "/tmp"
 facility = syslog.LOG_LOCAL1
 pubSocket = "ipc:///tmp/adsb-json-feed"
 
-PING_EVERY = 30 # secs for now
+PING_EVERY = 30  # secs for now
 
 
 def in_range(x, range):
@@ -56,6 +58,7 @@ def in_range(x, range):
         return False
     return True
 
+
 valid_freq = (300, 1800)
 valid_pressure = (0, 1200)
 valid_temp = (-200, 100)
@@ -63,6 +66,7 @@ valid_humidity = (0, 100)
 valid_ttl = (-3600, 36000)
 valid_voltage = (1.8, 24)
 valid_vel_h = (0.0001, 200)
+
 
 def parse_comment(c, sonde_time):
     r = dict()
@@ -92,10 +96,12 @@ def parse_comment(c, sonde_time):
                 r['voltage'] = v
     return r
 
+
 def remove_prefix(text, prefix):
     if text.startswith(prefix):
         return text[len(prefix):]
     return text
+
 
 def as_geojson(js):
     decoded = js['decoded']
@@ -116,7 +122,6 @@ def as_geojson(js):
         print(f"-- parse error {s}")
         d = time_created
 
-
     properties["time"] = d
     vel_h = float(decoded['vel_h'])
     if in_range(vel_h, valid_vel_h):
@@ -132,6 +137,7 @@ def as_geojson(js):
     feature = geojson.Feature(geometry=point,
                               properties={**comment_values, **properties})
     return feature
+
 
 class SondeObservation(object):
     def __init__(self, name, when):
@@ -150,10 +156,10 @@ class SondeObservation(object):
     def __geo_interface__(self):
         return self.featureCollection
 
+
 class SondeObserver(object):
     def __init__(self):
         self.aircraft = dict()
-
 
     def processMessage(self, data, topic):
         log.debug(f"processMessage topic={topic} data={data}")
@@ -168,14 +174,14 @@ class SondeObserver(object):
         so = self.aircraft[serial]
         so.addSample(msg, observed)
         log.debug((f"update sonde: {serial} samples={so.sampleCount()}"
-                  f" loc={msg.geometry.coordinates}"))
+                   f" loc={msg.geometry.coordinates}"))
 
     @property
     def __geo_interface__(self):
         fc = geojson.FeatureCollection([])
-        for k,v in self.aircraft.items():
-            fc.features.add(v)
-        return self.featureCollection
+        for k, v in self.aircraft.items():
+            fc.features.append(v)
+        return fc
 
 
 def client_updater(flight_observer,  zmqSocket):
@@ -183,7 +189,7 @@ def client_updater(flight_observer,  zmqSocket):
 
     # _topic = b'adsb-json'
     #
-    # if not feeder_factory.clients and not zmqSocket:
+    # if not clients and not zmqSocket:
     #     return
     #
     # # BATCH THIS!!
@@ -203,11 +209,11 @@ def client_updater(flight_observer,  zmqSocket):
     #     if zmqSocket:
     #         zmqSocket.send_multipart([_topic, js])
     #
-    #     if not feeder_factory.clients:
+    #     if not clients:
     #         continue
     #
     #     pbf = geobuf.encode(o.__geo_interface__)
-    #     for client in feeder_factory.clients:
+    #     for client in clients:
     #         if within(lat, lon, alt, client.bbox):
     #             if isinstance(client, Downstream):
     #                 client.transport.write(js)
@@ -223,26 +229,26 @@ def client_updater(flight_observer,  zmqSocket):
 
 class WSServerProtocol(WebSocketServerProtocol):
 
+    def __init__(self):
+        super().__init__()
+        self.forwarded_for = ''
+        logging.debug(f"WebSocket __init__")
+
     def onConnecting(self, transport_details):
         logging.info(f"WebSocket connecting: {transport_details}")
         self.last_heard = datetime.utcnow().timestamp()
 
-
     def doPing(self):
         if self.run:
             self.sendPing()
-            #self.factory.pingsSent[self.peer] += 1
-            #log.debug(f"Ping sent to {self.peer}")
             reactor.callLater(PING_EVERY, self.doPing)
 
     def onPong(self, payload):
-        #self.factory.pongsReceived[self.peer] += 1
         self.last_heard = datetime.utcnow().timestamp()
-        #log.debug(f"Pong received from {self.peer}")
-
 
     def onConnect(self, request):
-        log.debug(f"Client connecting: {request.peer} version {request.version}")
+        log.debug(
+            f"Client connecting: {request.peer} version {request.version}")
         log.debug(f"headers: {request.headers}")
         log.debug(f"path: {request.path}")
         log.debug(f"params: {request.params}")
@@ -267,11 +273,12 @@ class WSServerProtocol(WebSocketServerProtocol):
         if not self.proto:
             raise ConnectionDeny(ConnectionDeny.BAD_REQUEST)
 
-        self.user_agent = request.headers.get('user-agent',"")
+        self.user_agent = request.headers.get('user-agent', "")
 
-        log.debug(f"chosen protocol {self.proto} for {self.forwarded_for} via {self.peer} ua={self.user_agent}")
+        log.debug(
+            f"chosen protocol {self.proto} for {self.forwarded_for} via {self.peer} ua={self.user_agent}")
 
-        #FIXME
+        # FIXME
         return self.proto
 
         if 'token' in request.params:
@@ -292,9 +299,9 @@ class WSServerProtocol(WebSocketServerProtocol):
                 log.error(f"JWTError  {e}")
                 raise ConnectionDeny(1066)
 
-
         else:
-            log.info(f"no token passed in URI by {self.forwarded_for} via {request.peer}")
+            log.info(
+                f"no token passed in URI by {self.forwarded_for} via {request.peer}")
             raise ConnectionDeny(1066)
 
         # accept the WebSocket connection, speaking subprotocol `proto`
@@ -303,23 +310,27 @@ class WSServerProtocol(WebSocketServerProtocol):
         return self.proto
 
     def sessionExpired(self):
-        self.factory.feeder_factory.unregisterClient(self)
-        log.debug(f"token validity time exceeded, closing {self.forwarded_for} via {self.peer}")
+        self.factory.unregisterClient(self)
+        log.debug(
+            f"token validity time exceeded, closing {self.forwarded_for} via {self.peer}")
         self.sendClose()
 
     def onOpen(self):
         log.debug(f"connection open to {self.forwarded_for} via {self.peer}")
         self.run = True
-        self.factory.feeder_factory.registerClient(self)
+        self.factory.registerClient(self)
         self.doPing()
 
+        for k, v in self.factory.observer.aircraft.items():
+            js = orjson.dumps(v.__geo_interface__, option=orjson.OPT_APPEND_NEWLINE)
+            pbf = geobuf.encode(v.__geo_interface__)
+            for client in self.factory.clients:
+                if client.proto == 'sonde-geobuf':
+                    client.sendMessage(pbf, True)
+                if client.proto == 'sonde-json':
+                    client.sendMessage(js, False)
 
     def onMessage(self, payload, isBinary):
-        # if isBinary:
-        #     log.debug(f"Binary message received: {len(payload)} bytes")
-        # else:
-        #     log.debug(f"Text message received: {payload.decode('utf8')}")
-
         (success, bbox, response) = self.factory.bbox_validator.validate_str(payload)
         if not success:
             log.info(f'{self.peer} bbox update failed: {response}')
@@ -333,7 +344,7 @@ class WSServerProtocol(WebSocketServerProtocol):
         log.debug(
             f"WebSocket connection closed by {self.forwarded_for} via {self.peer}: wasClean={wasClean} code={code} reason={reason}")
         self.run = False
-        self.factory.feeder_factory.unregisterClient(self)
+        self.factory.unregisterClient(self)
 
     def notifyClient(self, msg):
         WebSocketProtocol.sendMessage(self, msg)
@@ -344,7 +355,13 @@ class WSServerFactory(WebSocketServerFactory):
     protocol = WSServerProtocol
     _subprotocols = ['sonde-geobuf', 'sonde-json']
 
-    def __init__(self, url='ws://localhost', observer=None):
+    def __init__(self, url='ws://localhost',
+                 observer=None,
+                 bbox_validator=None,
+                 jwt_authenticator=None):
+
+        self.bbox_validator = bbox_validator
+        self.jwt_authenticator = jwt_authenticator
         self.observer = observer
         self.clients = set()
         WebSocketServerFactory.__init__(self, url)
@@ -387,10 +404,10 @@ class StateResource(Resource):
     <th>total byes</th>
     <th>typus</th>
 </tr>"""
-        for u in self.feeder_factory.upstreams:
+        for u in self.upstreams:
             upstreams += (
 
-#FIXME          self.feeder_factory.connects[host]['connects'] += 1
+                # FIXME          self.connects[host]['connects'] += 1
                 f"<tr><td>{u.transport.getPeer()}</td>"
                 f"<td>{u.feedstats['connects']}</td>"
                 f"<td>{u.feedstats['lines']}</td>"
@@ -403,7 +420,7 @@ class StateResource(Resource):
         tcp_clients = ""
         ws_clients = ""
 
-        for client in self.feeder_factory.clients:
+        for client in self.clients:
             if isinstance(client, Downstream):
                 tcp_clients += f"\t\t<tr><td>{client.transport.getPeer()}</td><td>{client.bbox}</td></tr>\n"
 
@@ -485,6 +502,7 @@ def Bzip2Rotator(source, dest):
             df.write(compressed)
     os.remove(source)
 
+
 def setup_logging(level, appName, logDir):
     global log
     log = logging.getLogger(appName)
@@ -506,6 +524,15 @@ def setup_logging(level, appName, logDir):
     logHandler.setFormatter(fmt)
     logHandler.setLevel(level)
     log.addHandler(logHandler)
+
+    logtargets = []
+    logtargets.append(
+        FilteringLogObserver(
+            textFileLogObserver(sys.stderr),
+            predicates=[LogLevelFilterPredicate(LogLevel.debug)]
+        )
+    )
+    globalLogBeginner.beginLoggingTo(logtargets)
 
 
 def main():
@@ -568,7 +595,6 @@ def main():
                         default=None,
                         help='HTTP status report listen definition like tcp:1080')
 
-
     args = parser.parse_args()
 
     level = logging.WARNING
@@ -588,11 +614,11 @@ def main():
     observer = SondeObserver()
 
     if args.websocket:
-        websocket_factory = WSServerFactory(url=args.websocket, observer=observer)
-        websocket_factory.bbox_validator = bbox_validator
-        websocket_factory.jwt_auth = jwt_authenticator
-
-    flight_observer = None #observer.FlightObserver()
+        websocket_factory = WSServerFactory(url=args.websocket,
+                                            observer=observer,
+                                            bbox_validator=bbox_validator,
+                                            jwt_authenticator=jwt_authenticator)
+    flight_observer = None  # observer.FlightObserver()
 
     if args.websocket:
         #websocket_factory.feeder_factory = feeder_factory
@@ -602,7 +628,6 @@ def main():
         root = Resource()
         root.putChild(b"", StateResource(flight_observer, websocket_factory))
         webserver = serverFromString(reactor, args.reporter).listen(Site(root))
-
 
     zmqSocket = None
     if args.endpoint:
