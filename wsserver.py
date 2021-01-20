@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone, time, date
 import base64
 from collections import Counter
 import geojson
+
 #import geobuf
 import ciso8601
 from txzmq import ZmqEndpoint, ZmqFactory, ZmqPubConnection, ZmqSubConnection
@@ -42,7 +43,9 @@ import boundingbox
 from jwt import InvalidAudienceError, ExpiredSignatureError, InvalidSignatureError, PyJWTError
 from jwtauth import *
 
-import protobuf.messages_pb2
+from google.protobuf.json_format import MessageToJson
+import protobuf.messages_pb2 as messages
+import protobuf.geobuf_pb2 as geo
 from  protobuf.encode import Encoder
 from  protobuf.decode import Decoder
 
@@ -165,15 +168,22 @@ class SondeObservation(object):
         self.firstSeen = when
         self.name = name
         self.updated = False
+        self.path_as_pbf = None
 
     def addSample(self, sample, when):
         self.lastSeen = when
         self.featureCollection.features.append(sample)
         self.updated = True
+        self.last_sample_as_pbf = geobuf_encode(sample)
+
+    def getPbfSample(self):
+        return self.last_sample_as_pbf
+
+    def getPbfPath(self):
+        return geobuf_encode(self.__geo_interface__)
 
     def sampleCount(self):
         return len(self.featureCollection.features)
-
 
     @property
     def __geo_interface__(self):
@@ -214,48 +224,6 @@ class SondeObserver(object):
             fc.features.append(v)
         return fc
 
-
-def client_updater(flight_observer,  zmqSocket):
-    pass
-
-    # _topic = b'adsb-json'
-    #
-    # if not clients and not zmqSocket:
-    #     return
-    #
-    # # BATCH THIS!!
-    # obs = flight_observer.getObservations()
-    #
-    # for icao, o in obs.items():
-    #     if not o.isUpdated():
-    #         continue
-    #     if not o.isPresentable():
-    #         continue
-    #
-    #     lat = o.getLat()
-    #     lon = o.getLon()
-    #     alt = o.getAltitude()
-    #
-    #     js = orjson.dumps(o.__geo_interface__, option=orjson.OPT_APPEND_NEWLINE)
-    #     if zmqSocket:
-    #         zmqSocket.send_multipart([_topic, js])
-    #
-    #     if not clients:
-    #         continue
-    #
-    #     pbf = geobuf.encode(o.__geo_interface__)
-    #     for client in clients:
-    #         if within(lat, lon, alt, client.bbox):
-    #             if isinstance(client, Downstream):
-    #                 client.transport.write(js)
-    #             if isinstance(client, WSServerProtocol):
-    #                 if not client.usr:
-    #                     continue
-    #                 if client.proto == 'adsb-geobuf':
-    #                     client.sendMessage(pbf, True)
-    #                 if client.proto == 'adsb-json':
-    #                     client.sendMessage(js, False)
-    #     o.resetUpdated()
 
 
 class WSServerProtocol(WebSocketServerProtocol):
@@ -352,15 +320,20 @@ class WSServerProtocol(WebSocketServerProtocol):
         self.factory.registerClient(self)
         self.doPing()
 
+        sc = messages.ServerContainer()
+        sc.typ = messages.ServerContainerType.MT_DUMP
         # a full dump - FIXME needs bbox
         for k, v in self.factory.observer.aircraft.items():
-            js = orjson.dumps(v.__geo_interface__, option=orjson.OPT_APPEND_NEWLINE)
-            pbf = geobuf_encode(v.__geo_interface__)
-            for client in self.factory.clients:
-                if client.proto == 'sonde-geobuf':
-                    client.sendMessage(pbf, True)
-                if client.proto == 'sonde-json':
-                    client.sendMessage(js, False)
+            d = sc.sonde_paths.add()
+            d.MergeFromString(v.getPbfPath())
+
+        pbf = sc.SerializeToString()
+        js = MessageToJson(sc,  use_integers_for_enums=True).encode()
+        for client in self.factory.clients:
+            if client.proto == 'sonde-geobuf':
+                client.sendMessage(pbf, True)
+            if client.proto == 'sonde-json':
+                client.sendMessage(js, False)
 
     def onMessage(self, payload, isBinary):
         (success, bbox, response) = self.factory.bbox_validator.validate_str(payload)
@@ -414,14 +387,21 @@ class WSServerFactory(WebSocketServerFactory):
 
     def updateClients(self):
         changed = self.observer.getChanged()
+        if not changed:
+            return
+        sc = messages.ServerContainer()
+        sc.typ = messages.ServerContainerType.MT_UPDATE
         for v in changed:
-            js = orjson.dumps(v.__geo_interface__, option=orjson.OPT_APPEND_NEWLINE)
-            pbf = geobuf_encode(v.__geo_interface__)
-            for client in self.clients:
-                if client.proto == 'sonde-geobuf':
-                    client.sendMessage(pbf, True)
-                if client.proto == 'sonde-json':
-                    client.sendMessage(js, False)
+            d = sc.sonde_updates.add()
+            d.MergeFromString(v.getPbfSample())
+
+        pbf = sc.SerializeToString()
+        js = MessageToJson(sc,  use_integers_for_enums=True).encode()
+        for client in self.clients:
+            if client.proto == 'sonde-geobuf':
+                client.sendMessage(pbf, True)
+            if client.proto == 'sonde-json':
+                client.sendMessage(js, False)
 
 class StateResource(Resource):
 
