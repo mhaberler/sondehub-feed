@@ -1,0 +1,79 @@
+syntax = "proto2";
+option optimize_for = LITE_RUNTIME;
+
+//  protoc --proto_path=. --python_out=. protobuf/messages.proto
+//  protoc --proto_path=. --python_out=. protobuf/geobuf.proto
+package airborne;
+
+import "protobuf/geobuf.proto";
+
+enum ServerContainerType {
+  MT_UPDATE = 1;
+  MT_DUMP       = 3;
+  MT_CLIENT_MESSAGE  = 4;
+}
+
+enum ClientContainerType {
+  MT_UPDATE_BBOX     = 1;
+  MT_SUBSCRIBE       = 2;
+}
+
+message Timestamp {
+  // Represents seconds of UTC time since Unix epoch
+  // 1970-01-01T00:00:00Z. Must be from 0001-01-01T00:00:00Z to
+  // 9999-12-31T23:59:59Z inclusive.
+  required int64 seconds = 1;
+
+  // Non-negative fractions of a second at nanosecond resolution. Negative
+  // second values with fractions must still have non-negative nanos values
+  // that count forward in time. Must be from 0 to 999,999,999
+  // inclusive.
+  optional int32 nanos = 2;
+}
+
+// a sonde ascent retrieved from MADIS
+message MadisSonde {
+  required Timestamp   sonde_validtime = 1;
+  required Timestamp   updated_at = 2;
+  required string      wmo_id = 3;
+  repeated float  temperatureK = 4;
+  repeated float  dewpointK = 5;
+  repeated float  pressurehPA = 6;
+  repeated float  u_windMS = 7;
+  repeated float  v_windMS = 8;
+  required Data        location = 9;
+  required string      station_name = 10;
+}
+
+message ServerContainer {
+
+    required ServerContainerType typ = 1;
+
+    optional string client_message = 2;
+    optional uint32 seconds_left = 3;
+    repeated bytes mystery_data = 4;
+    repeated string topics =  5;
+
+    repeated Data sonde_updates = 10;
+    repeated Data sonde_paths = 15;
+    repeated Data madis_paths = 20;
+    repeated Data dwd_paths = 25;
+
+    repeated Data adsb_updates = 30;
+    repeated Data adsb_paths = 35;
+}
+
+message BoundingBox {
+  required float min_latitude = 1;
+  required float max_latitude = 2;
+  required float min_longitude  = 3;
+  required float max_longitude = 4;
+  optional float min_altitude = 5;
+  optional float max_altitude = 6;
+}
+
+message ClientContainer {
+  required ClientContainerType typ = 1;
+  optional BoundingBox  bbox = 2;
+  repeated string topics =  5;
+}
