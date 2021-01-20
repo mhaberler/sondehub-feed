@@ -146,6 +146,10 @@ class SondeObservation(object):
     def sampleCount(self):
         return len(self.featureCollection.features)
 
+    @property
+    def __geo_interface__(self):
+        return self.featureCollection
+
 class SondeObserver(object):
     def __init__(self):
         self.aircraft = dict()
@@ -165,6 +169,14 @@ class SondeObserver(object):
         so.addSample(msg, observed)
         log.debug((f"update sonde: {serial} samples={so.sampleCount()}"
                   f" loc={msg.geometry.coordinates}"))
+
+    @property
+    def __geo_interface__(self):
+        fc = geojson.FeatureCollection([])
+        for k,v in self.aircraft.items():
+            fc.features.add(v)
+        return self.featureCollection
+
 
 def client_updater(flight_observer,  zmqSocket):
     pass
@@ -259,6 +271,9 @@ class WSServerProtocol(WebSocketServerProtocol):
 
         log.debug(f"chosen protocol {self.proto} for {self.forwarded_for} via {self.peer} ua={self.user_agent}")
 
+        #FIXME
+        return self.proto
+
         if 'token' in request.params:
             try:
                 for token in request.params['token']:
@@ -320,12 +335,32 @@ class WSServerProtocol(WebSocketServerProtocol):
         self.run = False
         self.factory.feeder_factory.unregisterClient(self)
 
+    def notifyClient(self, msg):
+        WebSocketProtocol.sendMessage(self, msg)
+
 
 class WSServerFactory(WebSocketServerFactory):
 
     protocol = WSServerProtocol
     _subprotocols = ['sonde-geobuf', 'sonde-json']
 
+    def __init__(self, url='ws://localhost', observer=None):
+        self.observer = observer
+        self.clients = set()
+        WebSocketServerFactory.__init__(self, url)
+        log.debug(f"Listening on: {url}")
+
+    def registerClient(self, client):
+        self.clients.add(client)
+
+    def unregisterClient(self, client):
+        self.clients.discard(client)
+
+    def notifyClients(self, message):
+        log.debug(f"Broadcasting: {message}")
+        for c in self.clients:
+            c.notifyClient(message)
+        log.debug(f"Sent messages")
 
 
 class StateResource(Resource):
@@ -550,8 +585,10 @@ def main():
     bbox_validator = boundingbox.BBoxValidator()
     websocket_factory = None
 
+    observer = SondeObserver()
+
     if args.websocket:
-        websocket_factory = WSServerFactory(args.websocket)
+        websocket_factory = WSServerFactory(url=args.websocket, observer=observer)
         websocket_factory.bbox_validator = bbox_validator
         websocket_factory.jwt_auth = jwt_authenticator
 
@@ -566,7 +603,6 @@ def main():
         root.putChild(b"", StateResource(flight_observer, websocket_factory))
         webserver = serverFromString(reactor, args.reporter).listen(Site(root))
 
-    observer = SondeObserver()
 
     zmqSocket = None
     if args.endpoint:
