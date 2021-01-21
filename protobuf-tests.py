@@ -3,11 +3,11 @@ from datetime import datetime
 from geojson import Feature, Point, FeatureCollection
 from google.protobuf.json_format import MessageToJson, MessageToDict
 
-import protobuf.messages_pb2 as messages
-import protobuf.geobuf_pb2 as geo
+import messages_pb2 as messages
+#import geobuf_pb2 as geo
 
-from  protobuf.encode import Encoder
-from  protobuf.decode import Decoder
+from  encode import Encoder
+from  decode import Decoder
 
 
 def geobuf_encode(*args):
@@ -80,3 +80,8 @@ print(cc)
 
 ts = messages.Timestamp()
 ts.seconds = int(datetime.utcnow().timestamp())
+
+
+fail = b'khgfsdkjhfgjdhsagflsadghflsdajhgfsaezezfajhsdglhdajs'
+sc2 = messages.ServerContainer()
+sc2.ParseFromString(fail)
