@@ -44,36 +44,27 @@ from jwt import InvalidAudienceError, ExpiredSignatureError, InvalidSignatureErr
 from jwtauth import *
 
 from google.protobuf.json_format import MessageToJson
-import protobuf.messages_pb2 as messages
-import protobuf.geobuf_pb2 as geo
-from  protobuf.encode import Encoder
-from  protobuf.decode import Decoder
+import messages_pb2 as messages
+import geobuf_pb2 as geo
+from  encode import Encoder
+from  decode import Decoder
+from google.protobuf.json_format import MessageToJson, MessageToDict
+from google.protobuf.message import DecodeError
 
-#import geobuf
-
-# from protobuf.geobuf_pb2 import Data
-# import protobuf.messages_pb2
-# from protobuf.geobuf_pb2 import Data
-#
-# from protobuf.messages_pb2 import ServerContainerType, ClientContainerType, Timestamp, \
-#     MadisSonde, ServerContainer, BoundingBox, ClientContainer
 appName = "sonde-server"
 defaultLoglevel = 'INFO'
 defaultLogDir = "/var/log/sonde-server"
-defaultLogDir = "/tmp"
 facility = syslog.LOG_LOCAL1
-pubSocket = "ipc:///tmp/adsb-json-feed"
+pubSocket = "ipc:///tmp/sondes-feed"
 
 PING_EVERY = 30  # secs for now
 
-
+# hack around import problem
 def geobuf_encode(*args):
     return Encoder().encode(*args)
 
-
 def geobuf_decode(*args):
     return Decoder().decode(*args)
-
 
 def in_range(x, range):
     (lower, upper) = range
@@ -81,7 +72,7 @@ def in_range(x, range):
         return False
     return True
 
-
+# plausibility ranges
 valid_freq = (300, 1800)
 valid_pressure = (0, 1200)
 valid_temp = (-200, 100)
@@ -89,7 +80,6 @@ valid_humidity = (0, 100)
 valid_ttl = (-3600, 36000)
 valid_voltage = (1.8, 24)
 valid_vel_h = (0.0001, 200)
-
 
 def parse_comment(c, sonde_time):
     r = dict()
@@ -231,6 +221,7 @@ class WSServerProtocol(WebSocketServerProtocol):
     def __init__(self):
         super().__init__()
         self.forwarded_for = ''
+        self.topics = []  # what we're interested in
         logging.debug(f"WebSocket __init__")
 
     def onConnecting(self, transport_details):
@@ -261,6 +252,11 @@ class WSServerProtocol(WebSocketServerProtocol):
         self.geobuf = 'options' in request.params and 'geobuf' in request.params['options']
         self.forwarded_for = request.headers.get('x-forwarded-for', '')
         self.host = request.headers.get('host', '')
+        if 'topics' in request.params:
+            for t in request.params['topics']:
+                self.topics.extend(t.split(','))
+
+            log.debug(f"param topics {self.topics}")
 
         self.proto = None
         # server-side preference of subprotocol
@@ -336,14 +332,29 @@ class WSServerProtocol(WebSocketServerProtocol):
                 client.sendMessage(js, False)
 
     def onMessage(self, payload, isBinary):
-        (success, bbox, response) = self.factory.bbox_validator.validate_str(payload)
-        if not success:
-            log.info(f'{self.peer} bbox update failed: {response}')
-            self.sendMessage(orjson.dumps(
-                response, option=orjson.OPT_APPEND_NEWLINE), isBinary)
+        success = False
+        if isBinary:
+            try:
+                cc = messages.ClientContainer()
+                cc.ParseFromString(payload)
+                dictcc = MessageToDict(cc, preserving_proto_field_name=True)
+
+            except DecodeError:
+                log.error("protobuf parse failed: {payload}")
+                return
+
+            if 'bbox' in dictcc:
+                (success, bbox, response) = self.factory.bbox_validator.validate(dictcc['bbox'])
+
+            if cc.typ ==  messages.ClientContainerType.MT_SUBSCRIBE:
+                self.topics = dictcc['topics']
+                log.debug(f"pb topics {self.topics}")
         else:
-            log.debug(f'{self.peer} updated bbox: {bbox}')
-            self.bbox = bbox
+            (success, bbox, response) = self.factory.bbox_validator.validate_str(payload)
+
+        if success:
+                self.bbox = bbox
+                log.debug(f'updated bbox={bbox}')
 
     def onClose(self, wasClean, code, reason):
         log.debug(
