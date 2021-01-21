@@ -207,13 +207,19 @@ class SondeObserver(object):
         log.debug((f"update sonde: {serial} samples={so.sampleCount()}"
                    f" loc={msg.geometry.coordinates}"))
 
+    def cleanup(self, ageout):
+        cutoff = datetime.utcnow().timestamp() - ageout
+        for k, v in self.aircraft.items():
+            if v.lastSeen < cutoff:
+                log.info(f"removing sonde: {v.name} samples={v.sampleCount()}")
+                self.aircraft.pop(k)
+
     @property
     def __geo_interface__(self):
         fc = geojson.FeatureCollection([])
         for k, v in self.aircraft.items():
             fc.features.append(v)
         return fc
-
 
 
 class WSServerProtocol(WebSocketServerProtocol):
@@ -416,8 +422,8 @@ class WSServerFactory(WebSocketServerFactory):
 
 class StateResource(Resource):
 
-    def __init__(self, flight_observer, websocket_factory):
-        self.observer = flight_observer
+    def __init__(self, observer, websocket_factory):
+        self.observer = observer
         self.websocket_factory = websocket_factory
 
     def render_GET(self, request):
@@ -454,9 +460,7 @@ class StateResource(Resource):
         tcp_clients = ""
         ws_clients = ""
 
-        for client in self.clients:
-            if isinstance(client, Downstream):
-                tcp_clients += f"\t\t<tr><td>{client.transport.getPeer()}</td><td>{client.bbox}</td></tr>\n"
+        for client in self.websocket_factory.clients:
 
             if isinstance(client, WSServerProtocol):
                 ws_clients += (
@@ -465,11 +469,12 @@ class StateResource(Resource):
                     f"<td>{client.usr}</td>"
                     f"<td>{client.forwarded_for}</td>"
                     f"<td>{client.user_agent}</td></tr>\n"
+                    f"<td>{client.topics}</td></tr>\n"
                     f"<td>{self.now - client.last_heard:.1f} s ago</td></tr>\n"
                     f"</tr>\n"
                 )
         aircraft = """
-<H2>Aircraft observed</H2>
+<H2>Sondes observed</H2>
 <table>
 <tr>
     <th>icao</th>
@@ -629,6 +634,13 @@ def main():
                         default=None,
                         help='HTTP status report listen definition like tcp:1080')
 
+    parser.add_argument('--ageout',
+                        dest='ageout',
+                        action='store',
+                        type=int,
+                        default=60*60*24,
+                        help='remove sonde flights older that --ageout <seconds>')
+
     args = parser.parse_args()
 
     level = logging.WARNING
@@ -652,15 +664,13 @@ def main():
                                             observer=observer,
                                             bbox_validator=bbox_validator,
                                             jwt_authenticator=jwt_authenticator)
-    flight_observer = None  # observer.FlightObserver()
 
     if args.websocket:
-        #websocket_factory.feeder_factory = feeder_factory
         listenWS(websocket_factory)
 
     if args.reporter:
         root = Resource()
-        root.putChild(b"", StateResource(flight_observer, websocket_factory))
+        root.putChild(b"", StateResource(observer, websocket_factory))
         webserver = serverFromString(reactor, args.reporter).listen(Site(root))
 
     zmqSocket = None
@@ -674,6 +684,9 @@ def main():
 
     lc = LoopingCall(websocket_factory.updateClients)
     lc.start(0.5)
+
+    cleaner = LoopingCall(observer.cleanup, args.ageout)
+    cleaner.start(60*60)
 
     setproctitle.setproctitle((f"{appName} "
                                f"logdir={args.logDir} "))
