@@ -1,5 +1,8 @@
 # pip3 install boto3 paho-mqtt
 
+import hashlib
+import datetime
+import hmac
 import boto3
 import time
 import uuid
@@ -16,15 +19,17 @@ import os
 import bz2
 import signal
 import setproctitle
+import geojson
 
 appName = "sondehub-republisher"
 defaultLoglevel = 'INFO'
-minDelay=3
-maxDelay=120
+minDelay = 3
+maxDelay = 120
+reconnectPause = 10
 
-import hmac, datetime, urllib.parse, hashlib
 def aws_sign(key, msg):
     return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
+
 
 def aws_getSignatureKey(key, dateStamp, regionName, serviceName):
     kDate = aws_sign(('AWS4' + key).encode('utf-8'), dateStamp)
@@ -33,9 +38,10 @@ def aws_getSignatureKey(key, dateStamp, regionName, serviceName):
     kSigning = aws_sign(kService, 'aws4_request')
     return kSigning
 
+
 def aws_presign(access_key=None, secret_key=None, session_token=None, host=None, region=None, method=None, protocol=None, uri=None, service=None, expires=3600, payload_hash=None):
     # method=GET, protocol=wss, uri=/mqtt service=iotdevicegateway
-    assert 604800 >= expires >= 1, "Invalid expire time 604800 >= %s >= 1" % expires;
+    assert 604800 >= expires >= 1, "Invalid expire time 604800 >= %s >= 1" % expires
 
     # Date stuff, first is datetime, second is just date.
     t = datetime.datetime.utcnow()
@@ -48,7 +54,8 @@ def aws_presign(access_key=None, secret_key=None, session_token=None, host=None,
     credential_scope = date + '/' + region + '/' + service + '/' + 'aws4_request'
     # Start building the query-string
     canonical_querystring = 'X-Amz-Algorithm=' + algorithm
-    canonical_querystring += '&X-Amz-Credential=' + urllib.parse.quote_plus(access_key + '/' + credential_scope)
+    canonical_querystring += '&X-Amz-Credential=' + \
+        urllib.parse.quote_plus(access_key + '/' + credential_scope)
     canonical_querystring += '&X-Amz-Date=' + date_time
     canonical_querystring += '&X-Amz-Expires=' + str(expires)
     canonical_querystring += '&X-Amz-SignedHeaders=host'
@@ -60,15 +67,19 @@ def aws_presign(access_key=None, secret_key=None, session_token=None, host=None,
             payload_hash = 'UNSIGNED-PAYLOAD'
 
     canonical_headers = 'host:' + host + '\n'
-    canonical_request = method + '\n' + uri + '\n' + canonical_querystring + '\n' + canonical_headers + '\nhost\n' + payload_hash
+    canonical_request = method + '\n' + uri + '\n' + canonical_querystring + \
+        '\n' + canonical_headers + '\nhost\n' + payload_hash
 
-    string_to_sign = algorithm + '\n' + date_time + '\n' + credential_scope + '\n' + hashlib.sha256(canonical_request.encode()).hexdigest()
+    string_to_sign = algorithm + '\n' + date_time + '\n' + credential_scope + \
+        '\n' + hashlib.sha256(canonical_request.encode()).hexdigest()
     signing_key = aws_getSignatureKey(secret_key, date, region, service)
-    signature = hmac.new(signing_key, string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+    signature = hmac.new(signing_key, string_to_sign.encode(
+        'utf-8'), hashlib.sha256).hexdigest()
 
     canonical_querystring += '&X-Amz-Signature=' + signature
     if session_token:
-        canonical_querystring += '&X-Amz-Security-Token=' + urllib.parse.quote(session_token)
+        canonical_querystring += '&X-Amz-Security-Token=' + \
+            urllib.parse.quote(session_token)
 
     return protocol + '://' + host + uri + '?' + canonical_querystring
 
@@ -96,7 +107,8 @@ class SondeRepublisher(mqtt.Client):
                    port=443,
                    keepalive=60):
         self.topic = topic
-        self.ws_set_options(path=f"{urlparts.path}?{urlparts.query}", headers=headers)
+        self.ws_set_options(
+            path=f"{urlparts.path}?{urlparts.query}", headers=headers)
         self.tls_set()
         self.reconnect_delay_set(min_delay=minDelay, max_delay=maxDelay)
         self.connect(urlparts.netloc, port, keepalive)
@@ -110,7 +122,8 @@ class SondeRepublisher(mqtt.Client):
         self.subscribe(self.topic, 1)
 
     def on_message(self, mqttc, obj, msg):
-        log.debug(f"on_message topic={msg.topic} qos={msg.qos} payload={str(msg.payload)}")
+        log.debug(
+            f"on_message topic={msg.topic} qos={msg.qos} payload={str(msg.payload)}")
         self.zmqSocket.send_multipart([msg.topic.encode(), msg.payload])
 
     def on_publish(self, mqttc, obj, mid):
@@ -122,8 +135,10 @@ class SondeRepublisher(mqtt.Client):
     def on_log(self, mqttc, obj, level, string):
         log.log(level, f"on_log msg='{string}'")
 
-    def on_disconnect(self, client, userdata, rc):
-        log.warn(f"disconnecting reason: {rc}")
+    # def on_disconnect(self, client, userdata, rc):
+    #     log.warn(f"Unexpected MQTT disconnection, reconnecting after {reconnectPause}s. reason={rc}")
+    #     time.sleep(reconnectPause)
+    #     self.reconnect()
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -184,8 +199,8 @@ def setup_logging(level, appName, logDir):
 
 def main():
     parser = argparse.ArgumentParser(
-            description='receive sondehub feed and republish via zmq',
-            add_help=True)
+        description='receive sondehub feed and republish via zmq',
+        add_help=True)
 
     parser.add_argument('--sondehub-host',
                         dest='sondehubHost',
@@ -231,7 +246,8 @@ def main():
 
     parser.add_argument('-l', '--log',
                         help="set the logging level. Arguments:  DEBUG, INFO, WARNING, ERROR, CRITICAL",
-                        default=os.environ.get('SONDEHUB_LOGLEVEL', defaultLoglevel),
+                        default=os.environ.get(
+                            'SONDEHUB_LOGLEVEL', defaultLoglevel),
                         choices=['DEBUG', 'INFO',
                                  'WARNING', 'ERROR', 'CRITICAL'],
                         dest="logLevel")
@@ -248,11 +264,14 @@ def main():
     log.info(f"starting up")
 
     identityPoolID = f"{args.sondehubRegion}:{args.sondehubPoolId}"
-    cognitoIdentityClient = boto3.client('cognito-identity', region_name=args.sondehubRegion)
-    temporaryIdentityId = cognitoIdentityClient.get_id(IdentityPoolId=identityPoolID)
+    cognitoIdentityClient = boto3.client(
+        'cognito-identity', region_name=args.sondehubRegion)
+    temporaryIdentityId = cognitoIdentityClient.get_id(
+        IdentityPoolId=identityPoolID)
     identityID = temporaryIdentityId["IdentityId"]
 
-    temporaryCredentials = cognitoIdentityClient.get_credentials_for_identity(IdentityId=identityID)
+    temporaryCredentials = cognitoIdentityClient.get_credentials_for_identity(
+        IdentityId=identityID)
     AccessKeyId = temporaryCredentials["Credentials"]["AccessKeyId"]
     SecretKey = temporaryCredentials["Credentials"]["SecretKey"]
     SessionToken = temporaryCredentials["Credentials"]["SessionToken"]
@@ -268,7 +287,7 @@ def main():
                       region=args.sondehubRegion)
     urlparts = urlparse(url)
     headers = {
-            "Host": "{0:s}".format(urlparts.netloc),
+        "Host": "{0:s}".format(urlparts.netloc),
     }
     sp = SondeRepublisher(pubSocket=args.pubSocket,
                           logger=log,
@@ -279,6 +298,7 @@ def main():
                                f"logdir={args.logDir} "
                                f"host={args.sondehubHost}"))
     sp.run(retry_first_connection=True, timeout=20.0)
+
 
 if __name__ == '__main__':
     main()
