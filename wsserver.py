@@ -132,7 +132,7 @@ def as_geojson(js):
     try:
         d = ciso8601.parse_datetime(time_created).timestamp()
     except ValueError:
-        print(f"-- parse error {s}")
+        log.error(f"-- parse error {s}")
         d = time_created
 
     properties["time"] = d
