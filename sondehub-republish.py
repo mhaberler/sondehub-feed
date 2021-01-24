@@ -23,6 +23,7 @@ import geojson
 
 appName = "sondehub-republisher"
 defaultLoglevel = 'INFO'
+DEALER_IDENTITY = b'sondes'
 minDelay = 3
 maxDelay = 120
 reconnectPause = 10
@@ -88,13 +89,24 @@ class SondeRepublisher(mqtt.Client):
 
     def __init__(self,
                  clientId=str(uuid.uuid4()),
-                 pubSocket=None,
+                 pubSocketURI=None,
+                 dealerSocketURI=None,
                  logger=None,
                  clean_session=True):
 
         self.context = zmq.Context()
-        self.zmqSocket = self.context.socket(zmq.PUB)
-        self.zmqSocket.bind(pubSocket)
+
+        self.pubSocket = self.context.socket(zmq.PUB)
+        self.pubSocket.bind(pubSocketURI)
+
+        if dealerSocketURI:
+            self.dealerSocket = self.context.socket(zmq.DEALER)
+            self.dealerSocket.bind(dealerSocketURI)
+            self.dealerSocket.setsockopt(zmq.IDENTITY, DEALER_IDENTITY)
+
+        else:
+            self.dealerSocket = None
+
         mqtt.Client.__init__(self, client_id=clientId,
                              clean_session=clean_session, transport="websockets")
         self.enable_logger(logger=logger)
@@ -124,7 +136,12 @@ class SondeRepublisher(mqtt.Client):
     def on_message(self, mqttc, obj, msg):
         log.debug(
             f"on_message topic={msg.topic} qos={msg.qos} payload={str(msg.payload)}")
-        self.zmqSocket.send_multipart([msg.topic.encode(), msg.payload])
+        self.pubSocket.send_multipart([msg.topic.encode(), msg.payload])
+        if self.dealerSocket:
+            try:
+                self.dealerSocket.send(msg.payload, zmq.DONTWAIT)
+            except zmq.error.Again:
+                pass
 
     def on_publish(self, mqttc, obj, mid):
         log.debug(f"on_publish mid={str(mid)}")
@@ -237,6 +254,13 @@ def main():
                         type=str,
                         help='republishing socket like ipc:///tmp/sondehub-feed or tcp://127.0.0.1:5001')
 
+    parser.add_argument('--dealer-socket',
+                        dest='dealerSocket',
+                        action='store',
+                        default=os.environ.get('SONDEHUB_DEALERSOCKET'),
+                        type=str,
+                        help='republishing dealer socket like ipc:///tmp/sondehub-feed or tcp://127.0.0.1:5001')
+
     parser.add_argument('--log-dir',
                         dest='logDir',
                         action='store',
@@ -289,7 +313,8 @@ def main():
     headers = {
         "Host": "{0:s}".format(urlparts.netloc),
     }
-    sp = SondeRepublisher(pubSocket=args.pubSocket,
+    sp = SondeRepublisher(pubSocketURI=args.pubSocket,
+                          dealerSocketURI=args.dealerSocket,
                           logger=log,
                           clean_session=args.clean_session,
                           clientId=args.clientId)
