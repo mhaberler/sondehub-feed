@@ -152,10 +152,11 @@ class SondeRepublisher(mqtt.Client):
     def on_log(self, mqttc, obj, level, string):
         log.log(level, f"on_log msg='{string}'")
 
-    # def on_disconnect(self, client, userdata, rc):
-    #     log.warn(f"Unexpected MQTT disconnection, reconnecting after {reconnectPause}s. reason={rc}")
-    #     time.sleep(reconnectPause)
-    #     self.reconnect()
+    def on_disconnect(self, client, userdata, rc):
+        log.warn(f"Unexpected MQTT disconnection: userdata={userdata} reason={rc}, exit for restart")
+        sys.exit(0) # let systemd do the restart
+        # time.sleep(reconnectPause)
+        # self.reconnect()
 
 def str2bool(v):
     if isinstance(v, bool):
