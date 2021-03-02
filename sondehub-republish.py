@@ -22,6 +22,7 @@ import setproctitle
 import geojson
 import json
 import datetime
+import time
 
 appName = "sondehub-republisher"
 defaultLoglevel = 'INFO'
@@ -194,7 +195,7 @@ def main():
                                f"logdir={args.logDir} "))
     #sp.run(retry_first_connection=True, timeout=20.0)
     while 1:
-        pass
+        time.sleep(0.3)
 
 if __name__ == '__main__':
     main()
